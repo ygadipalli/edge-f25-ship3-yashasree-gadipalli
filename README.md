@@ -90,3 +90,11 @@ Stored passwords:
 > 5
 Enter site name to search: yahoo
 ID 2: yahoo | shark | password: ******** | Last updated: 2025-10-26T22:19:31.655625
+
+## Security Model
+
+1. **Password Encryption:** All stored passwords are encrypted at rest using Fernet symmetric encryption with a key derived from the user's master password via PBKDF2-HMAC-SHA256.
+2. **Master Password:** The master password is never stored. It is required at login to derive the encryption key.
+3. **Data Integrity:** Password data is versioned, backed up, and verified before writes. Corrupted or tampered files are detected and a backup is used instead.
+4. **Input Validation:** All user inputs are sanitized; empty fields and unsafe characters are rejected. Unique identifiers are enforced.
+5. **Destructive Actions:** Actions like delete or overwrite require confirmation from the user.
