@@ -56,3 +56,37 @@ Each track starts with stub functions that raise `NotImplementedError`, but you 
    ```
 
 If all tests pass and you see the greeting messages, your environment is ready.  You can now choose a track and start planning your project.
+
+##how to run:
+1. clone this repo
+2. run `python password_manager.py` or `python3 password_manager.py`
+3. use menu options to add, view, or delete passwords
+
+##example:
+Enter master password: ****
+
+Welcome to the Password Manager!
+
+Options:
+1. Login
+2. Register
+3. Add password
+4. View passwords
+5. Search passwords
+6. Edit password
+7. Delete password
+8. Quit
+Choose an option:
+
+> 1
+Enter username: shark
+Enter master password: shark
+Login successful.
+
+> 4
+Stored passwords:
+2. yahoo | shark | Last updated: 2025-10-26T22:19:31.655625
+
+> 5
+Enter site name to search: yahoo
+ID 2: yahoo | shark | password: ******** | Last updated: 2025-10-26T22:19:31.655625
