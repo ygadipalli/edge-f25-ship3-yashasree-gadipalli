@@ -98,3 +98,42 @@ ID 2: yahoo | shark | password: ******** | Last updated: 2025-10-26T22:19:31.655
 3. **Data Integrity:** Password data is versioned, backed up, and verified before writes. Corrupted or tampered files are detected and a backup is used instead.
 4. **Input Validation:** All user inputs are sanitized; empty fields and unsafe characters are rejected. Unique identifiers are enforced.
 5. **Destructive Actions:** Actions like delete or overwrite require confirmation from the user.
+
+10-Step Demo:
+1. Clone the repository
+git clone https://github.com/ygadipalli/edge-f25-ship3-yashasree-gadipalli.git
+
+2. Enter the project folder
+cd edge-f25-ship3-yashasree-gadipalli
+
+3. Run the password manager
+python3 password_manager.py
+
+4. Choose option 2 to register
+2
+
+5. Enter a new username
+(example)
+testuser
+
+6. Enter a master password
+(example)
+MySecurePass123
+
+7. Run the app again and log in
+python3 password_manager.py
+Choose:
+1
+Enter username + master password again
+
+8. After login, choose 1 to add a password
+(example entries)
+Site: gmail.com
+Username: alice
+Password: mypassword123
+
+9. Choose 2 from the menu to view saved passwords
+Encrypted entries will be shown with IDs.
+
+10. Choose 3 to delete a saved password
+Enter the ID to delete (example: 1)
