@@ -13,13 +13,12 @@ import hashlib
 import shutil
 import tempfile
 from datetime import datetime
-import shutil
 from cryptography.fernet import Fernet
 from hashlib import pbkdf2_hmac
 import base64
 
-
-import re
+# Global variable to store the active encryption key
+active_key = None
 
 # -----------------------
 # Input validation helpers
@@ -70,8 +69,53 @@ def validate_password(password: str) -> bool:
         return False
     return True
 
+def hash_password(password: str) -> str:
+    """Hash a password using SHA256."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def derive_key(master_password: str) -> bytes:
+    """Derive an encryption key from the master password."""
+    salt = b'ship6_fixed_salt'  # in a real app, store this safely or generate per-user
+    key = pbkdf2_hmac(
+        "sha256",
+        master_password.encode(),
+        salt,
+        100000
+    )
+    return base64.urlsafe_b64encode(key)
+
+def encrypt_password(password: str, key: bytes) -> str:
+    """Encrypt a password using Fernet encryption."""
+    f = Fernet(key)
+    return f.encrypt(password.encode()).decode()
+
+def decrypt_password(token: str, key: bytes) -> str:
+    """Decrypt a password using Fernet encryption."""
+    f = Fernet(key)
+    return f.decrypt(token.encode()).decode()
+
+def save_hash(data_file: str) -> None:
+    """Save a hash of the data file for integrity checking."""
+    if os.path.exists(data_file):
+        with open(data_file, "rb") as f:
+            content = f.read()
+        hash_value = hashlib.sha256(content).hexdigest()
+        os.makedirs("data", exist_ok=True)
+        with open("data/hash.txt", "w") as h:
+            h.write(hash_value)
+
+def verify_hash(data_file: str) -> bool:
+    """Verify the hash of the data file matches the stored hash."""
+    if not os.path.exists("data/hash.txt"):
+        return True  # no hash saved yet
+    with open("data/hash.txt") as h:
+        expected = h.read().strip()
+    with open(data_file, "rb") as f:
+        actual = hashlib.sha256(f.read()).hexdigest()
+    return actual == expected
 
 def create_backup():
+    """Create a timestamped backup of the passwords file."""
     os.makedirs("backups", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"backups/passwords_{timestamp}.json"
@@ -85,6 +129,7 @@ DATA_FILE = "data/passwords.json"
 BACKUP_FILE = "data/passwords.bak"
 
 def safe_save(data):
+    """Safely save data to the passwords file with backup."""
     os.makedirs("data", exist_ok=True)
     if os.path.exists(DATA_FILE):
         data["version"] = data.get("version", 1)
@@ -93,57 +138,10 @@ def safe_save(data):
         json.dump(data, tmp, indent=2)
         temp_name = tmp.name
     os.replace(temp_name, DATA_FILE)
-
-    def save_hash(data_file):
-        if os.path.exists(data_file):
-            with open(data_file, "rb") as f:
-                content = f.read()
-            hash_value = hashlib.sha256(content).hexdigest()
-            with open("data/hash.txt", "w") as h:
-                h.write(hash_value)
-
-    def verify_hash(data_file):
-        if not os.path.exists("data/hash.txt"):
-            return True  # no hash saved yet
-        with open("data/hash.txt") as h:
-            expected = h.read().strip()
-        with open(data_file, "rb") as f:
-            actual = hashlib.sha256(f.read()).hexdigest()
-        return actual == expected
-    
-    def derive_key(master_password: str) -> bytes:
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.backends import default_backend
-        import base64
-        salt = b'ship6_fixed_salt' # in a real app, store this safely or generate per-user
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100_000,
-            backend=default_backend()
-        )
-        key = pbkdf2_hmac(
-            "sha256",
-            master_password.encode(),
-            salt,
-            100000
-        )
-        return base64.urlsafe_b64encode(key)
-
-    def encrypt_password(password: str, key: bytes) -> str:
-        f = Fernet(key)
-        return f.encrypt(password.encode()).decode()
-
-    def decrypt_password(token: str, key: bytes) -> str:
-        f = Fernet(key)
-        return f.decrypt(token.encode()).decode()
-
+    save_hash(DATA_FILE)
 
 def register_user(username: str, master_password: str) -> None:
     """Register a new user with a hashed master password after validating input."""
-    # sanitize + validate
     username = sanitize_field(username)
     if not validate_nonempty(username, "Username"):
         return
@@ -153,7 +151,7 @@ def register_user(username: str, master_password: str) -> None:
     if not validate_password(master_password):
         return
 
-    hashed = hashlib.sha256(master_password.encode()).hexdigest()
+    hashed = hash_password(master_password)
 
     os.makedirs("data", exist_ok=True)
     user_file = "data/user_data.json"
@@ -173,23 +171,19 @@ def register_user(username: str, master_password: str) -> None:
     users[username] = hashed
     with open(user_file, "w") as f:
         json.dump(users, f)
-    print(f"User '{username}' registered.")          
+    print(f"User '{username}' registered.")
 
 def add_password(site: str, username: str, password: str, notes="", tags=None) -> None:
+    """Store a password for a given site."""
     global active_key
     if active_key is None:
         print("No active encryption key. Login first.")
         return
+    
     tags = tags or []
-    # sanitize
     site = sanitize_field(site)
     username = sanitize_field(username)
-    password = password  # keep raw password (don't strip interior whitespace)
-    safe_save(data)
-    save_hash("data/passwords.json")
-    print("Password added.")    
 
-    # validate
     if not validate_site_username(site, username):
         return
     if not validate_password(password):
@@ -214,13 +208,12 @@ def add_password(site: str, username: str, password: str, notes="", tags=None) -
                 print("Skipped.")
                 return
             elif choice == "o":
-                e["password"] = password
+                e["password"] = encrypt_password(password, active_key)
                 e["last_updated"] = datetime.now().isoformat()
                 safe_save(data)
                 print("Password overwritten.")
                 return
             elif choice == "k":
-                # allow duplicate
                 break
             else:
                 print("Invalid choice. Skipped.")
@@ -238,28 +231,19 @@ def add_password(site: str, username: str, password: str, notes="", tags=None) -
     }
     data["entries"].append(entry)
     safe_save(data)
-    """Store a password for a given site.
-
-    You will encrypt the password and save it to a JSON file,
-    associating it with the site and username.  This stub does nothing.
-
-    Args:
-        site: The website or service name.
-        username: The account username for the site.
-        password: The password to store.
-    """
+    print("Password added.")
 
 def get_passwords() -> dict:
+    """Retrieve all stored passwords."""
     if not os.path.exists(DATA_FILE):
         return {"version": 1, "entries": []}
     try:
+        if not verify_hash(DATA_FILE):
+            print("⚠️ Warning: passwords.json may have been modified outside the app.")
         with open(DATA_FILE, "r") as f:
-            if not verify_hash(DATA_FILE):
-                print("⚠️ Warning: passwords.json may have been modified outside the app.")
             data = json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Warning: failed to read data file ({e}). Creating a fresh structure. Your backup may contain previous data.")
-        # try to restore from backup if exists
+        print(f"Warning: failed to read data file ({e}). Creating a fresh structure.")
         if os.path.exists(BACKUP_FILE):
             try:
                 with open(BACKUP_FILE, "r") as bf:
@@ -269,50 +253,38 @@ def get_passwords() -> dict:
                 data = {"version": 1, "entries": []}
         else:
             data = {"version": 1, "entries": []}
-    # If old format (list), convert it
+    
     if isinstance(data, list):
         data = {"version": 1, "entries": data}
     return data
 
-    """Retrieve all stored passwords.
-
-    This will read from an encrypted JSON file and return a list
-    of dictionaries containing site, username and password.  For now
-    it raises `NotImplementedError`.
-
-    Returns:
-        A list of stored passwords.
-    """
+def login_user(username: str, master_password: str) -> bool:
+    """Authenticate a user and set the active encryption key."""
+    global active_key
+    if not os.path.exists("data/user_data.json"):
+        print("No users registered. Please register first.")
+        return False
+    try:
+        with open("data/user_data.json", "r") as f:
+            users = json.load(f)
+    except Exception:
+        print("Could not read user data. Please register again or check your files.")
+        return False
+    
+    hashed = hash_password(master_password)
+    if users.get(username) == hashed:
+        active_key = derive_key(master_password)
+        return True
+    print("Invalid username or password.")
+    return False
 
 def main() -> None:
-    """Entry point for the password manager.
-
-    When run directly, this prints a greeting.  You will replace this
-    with registration, login and menu functionality in future ships.
-    """
+    """Entry point for the password manager."""
     print("Welcome to the Password Manager!")
-
-    def login_user(username: str, master_password: str) -> bool:
-        global active_key  # <-- so we can store the key for later use
-        if not os.path.exists("data/user_data.json"):
-            print("No users registered. Please register first.")
-            return False
-        try:
-            with open("data/user_data.json", "r") as f:
-                users = json.load(f)
-        except Exception:
-            print("Could not read user data. Please register again or check your files.")
-            return False
-        hashed = hashlib.sha256(master_password.encode()).hexdigest()
-        if users.get(username) == hashed:
-            return True
-        print("Invalid username or password.")
-        return False
-
-
 
     logged_in = False
     current_user = None
+    
     while True:
         print("\nOptions:")
         print("1. Login")
@@ -324,18 +296,21 @@ def main() -> None:
         print("7. Delete password")
         print("8. Quit")
         choice = input("Choose an option: ")
+        
         while choice not in ["1", "2", "3", "4", "5", "6", "7", "8"]:
             print("Invalid option. Please enter 1, 2, 3, 4, 5, 6, 7 or 8.")
             choice = input("Choose an option: ")
+        
         if choice == "1":
             username = input("Enter username: ")
             master_password = input("Enter master password: ")
-            if not login_user(username, master_password):
+            if login_user(username, master_password):
+                print("Login successful.")
+                logged_in = True
+                current_user = username
+            else:
                 print("Login failed.")
-                return
-            print("Login successful.") 
-            logged_in = True
-            current_user = username
+        
         elif choice == "2":
             username = input("Enter a username: ").strip()
             if not username:
@@ -345,13 +320,8 @@ def main() -> None:
             if not master_password:
                 print("Master password cannot be empty.")
                 continue
-            data = get_passwords()
-            if username in data["users"]:
-                print("Username already exists.")
-                continue
-            data["users"][username] = hash_password(master_password)
-            safe_save(data)
-            print("User registered.")
+            register_user(username, master_password)
+        
         elif choice == "3":
             if not logged_in:
                 print("Please log in first.")
@@ -360,7 +330,7 @@ def main() -> None:
             username = input("Enter username: ")
             password = input("Enter password: ")
             add_password(site, username, password)
-            print("Password added.")
+        
         elif choice == "4":
             if not logged_in:
                 print("Please log in first.")
@@ -370,26 +340,23 @@ def main() -> None:
                 print("No passwords stored.")
                 continue
             for e in data["entries"]:
-                masked_pw = "*" * min(8, len(e.get("password", "")))  # show a consistent mask
+                masked_pw = "*" * 8
                 print(f"{e['id']}. {e['site']} | {e['username']} | Password: {masked_pw} | Last updated: {e.get('last_updated')}")
             reveal = input("Reveal a password? Enter ID or press Enter to skip: ").strip()
             if reveal:
                 if not reveal.isdigit():
                     print("Invalid ID.")
                 else:
+                    found = False
                     for e in data["entries"]:
                         if str(e["id"]) == reveal:
-                            if not reveal.isdigit():
-                                    print("Invalid ID.")
-                        else:
-                                    fernet = Fernet(active_key)
-                                    for e in data["entries"]:
-                                        if str(e["id"]) == reveal:
-                                            decrypted_pw = fernet.decrypt(e["password"].encode()).decode()
-                                            print(f"Password for {e['site']} ({e['username']}): {decrypted_pw}")
-                                            break
-                                    else:
-                                        print("ID not found.")
+                            decrypted_pw = decrypt_password(e["password"], active_key)
+                            print(f"Password for {e['site']} ({e['username']}): {decrypted_pw}")
+                            found = True
+                            break
+                    if not found:
+                        print("ID not found.")
+        
         elif choice == "5":
             if not logged_in:
                 print("Please log in first.")
@@ -397,15 +364,14 @@ def main() -> None:
             site = input("Enter site name to search: ").strip()
             data = get_passwords()
             found = False
-            # iterate through the entries list inside the data dict
             for entry in data.get("entries", []):
                 if entry.get("site", "").lower() == site.lower():
-                    # mask password when showing search results
                     masked = "*" * 8
                     print(f"ID {entry['id']}: {entry['site']} | {entry['username']} | password: {masked} | Last updated: {entry.get('last_updated')}")
                     found = True
             if not found:
                 print("No passwords found for that site.")
+        
         elif choice == "6":
             if not logged_in:
                 print("Please log in first.")
@@ -420,16 +386,19 @@ def main() -> None:
             if not entry_id.isdigit():
                 print("Invalid ID. Please enter a number.")
                 continue
+            found = False
             for e in data["entries"]:
                 if str(e["id"]) == entry_id:
                     new_pw = input("Enter new password: ")
-                    e["password"] = new_pw
+                    e["password"] = encrypt_password(new_pw, active_key)
                     e["last_updated"] = datetime.now().isoformat()
                     safe_save(data)
                     print("Password updated.")
+                    found = True
                     break
-            else:
+            if not found:
                 print("ID not found.")
+        
         elif choice == "7":
             if not logged_in:
                 print("Please log in first.")
@@ -444,7 +413,6 @@ def main() -> None:
             if not entry_id.isdigit():
                 print("Invalid ID. Please enter a number.")
                 continue
-            # confirm exists
             match = next((e for e in data["entries"] if str(e["id"]) == entry_id), None)
             if not match:
                 print("ID not found.")
@@ -453,13 +421,11 @@ def main() -> None:
             if confirm != "y":
                 print("Delete cancelled.")
                 continue
-            # perform delete
             new_entries = [e for e in data["entries"] if str(e["id"]) != entry_id]
             data["entries"] = new_entries
             safe_save(data)
             print("Password deleted.")
-        elif choice == "7.5": #optional hidden option
-            create_backup()
+        
         elif choice == "8":
             print("Goodbye! All data saved safely.")
             break
